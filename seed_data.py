@@ -1,8 +1,7 @@
 """
-Seed script - EXPANDED version for scalability testing.
-Now includes a 3rd department (Mechanical) to scale from
-3 sections/55 sessions up to 5 sections/~83 sessions - a
-meaningful stress test for your report's results section.
+Seed script - includes NEP 2020 cross-department elective data.
+"Software Engineering" (CS) and "Machine Design" (Mech) are marked
+as electives, and sections from OTHER departments pick them.
 Safe to re-run any time - it clears old data first.
 """
 
@@ -17,6 +16,7 @@ def hash_password(password: str) -> str:
 
 db = SessionLocal()
 
+db.query(models.SectionElective).delete()
 db.query(models.User).delete()
 db.query(models.TimetableEntry).delete()
 db.query(models.Timetable).delete()
@@ -49,7 +49,7 @@ subjects = [
     models.Subject(name="Data Structures", sessions_per_week=5, requires_lab=False, department_id=cs.id, faculty_id=sharma.id),
     models.Subject(name="Operating Systems", sessions_per_week=5, requires_lab=False, department_id=cs.id, faculty_id=verma.id),
     models.Subject(name="Database Systems", sessions_per_week=4, requires_lab=False, department_id=cs.id, faculty_id=iyer.id),
-    models.Subject(name="Software Engineering", sessions_per_week=3, requires_lab=False, department_id=cs.id, faculty_id=singh.id),
+    models.Subject(name="Software Engineering", sessions_per_week=3, requires_lab=False, is_elective=True, department_id=cs.id, faculty_id=singh.id),
     models.Subject(name="Programming Lab", sessions_per_week=3, requires_lab=True, department_id=cs.id, faculty_id=sharma.id),
     models.Subject(name="Digital Electronics", sessions_per_week=4, requires_lab=False, department_id=ece.id, faculty_id=rao.id),
     models.Subject(name="Signals and Systems", sessions_per_week=4, requires_lab=False, department_id=ece.id, faculty_id=nair.id),
@@ -57,11 +57,14 @@ subjects = [
     models.Subject(name="Electronics Lab", sessions_per_week=3, requires_lab=True, department_id=ece.id, faculty_id=nair.id),
     models.Subject(name="Thermodynamics", sessions_per_week=4, requires_lab=False, department_id=mech.id, faculty_id=gupta.id),
     models.Subject(name="Fluid Mechanics", sessions_per_week=4, requires_lab=False, department_id=mech.id, faculty_id=reddy.id),
-    models.Subject(name="Machine Design", sessions_per_week=3, requires_lab=False, department_id=mech.id, faculty_id=kumar.id),
+    models.Subject(name="Machine Design", sessions_per_week=3, requires_lab=False, is_elective=True, department_id=mech.id, faculty_id=kumar.id),
     models.Subject(name="Manufacturing Lab", sessions_per_week=3, requires_lab=True, department_id=mech.id, faculty_id=gupta.id),
 ]
 db.add_all(subjects)
 db.commit()
+
+software_engineering = next(s for s in subjects if s.name == "Software Engineering")
+machine_design = next(s for s in subjects if s.name == "Machine Design")
 
 rooms = [
     models.Room(name="Room 101", capacity=70, room_type="classroom"),
@@ -85,6 +88,16 @@ sections = [
 db.add_all(sections)
 db.commit()
 
+cse_3a = next(s for s in sections if s.name == "CSE-3A")
+ece_3a = next(s for s in sections if s.name == "ECE-3A")
+
+electives = [
+    models.SectionElective(section_id=cse_3a.id, subject_id=machine_design.id),
+    models.SectionElective(section_id=ece_3a.id, subject_id=software_engineering.id),
+]
+db.add_all(electives)
+db.commit()
+
 admin_user = models.User(
     name="Admin User",
     email="admin@college.edu",
@@ -105,7 +118,7 @@ student_user = models.User(
     email="student@college.edu",
     password_hash=hash_password("student123"),
     role="student",
-    section_id=sections[0].id,
+    section_id=cse_3a.id,
 )
 
 db.add_all([admin_user, faculty_user, student_user])
@@ -113,6 +126,7 @@ db.commit()
 db.close()
 
 print("Seed data inserted: 3 departments, 9 faculty, 13 subjects, 7 rooms, 5 sections")
+print("NEP 2020 electives: CSE-3A -> Machine Design (Mech), ECE-3A -> Software Engineering (CS)")
 print("")
 print("=== Demo login accounts ===")
 print("Admin:   admin@college.edu   / admin123")

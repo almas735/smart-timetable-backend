@@ -13,10 +13,6 @@ TOTAL_SLOTS = len(DAYS) * PERIODS_PER_DAY
 
 
 def generate_timetable(db: Session):
-    """Runs the full pipeline (load data -> GA -> repair) and
-    returns (assignments, metrics). Raises ValueError if there's
-    no data to schedule yet."""
-
     sections = db.query(models.Section).all()
     rooms = db.query(models.Room).all()
 
@@ -25,10 +21,21 @@ def generate_timetable(db: Session):
 
     sessions_to_schedule = []
     for section in sections:
-        subjects = db.query(models.Subject).filter(
-            models.Subject.department_id == section.department_id
+        core_subjects = db.query(models.Subject).filter(
+            models.Subject.department_id == section.department_id,
+            models.Subject.is_elective == False,
         ).all()
-        for subject in subjects:
+
+        elective_links = db.query(models.SectionElective).filter(
+            models.SectionElective.section_id == section.id
+        ).all()
+        elective_ids = [link.subject_id for link in elective_links]
+        elective_subjects = (
+            db.query(models.Subject).filter(models.Subject.id.in_(elective_ids)).all()
+            if elective_ids else []
+        )
+
+        for subject in core_subjects + elective_subjects:
             for _ in range(subject.sessions_per_week):
                 sessions_to_schedule.append({
                     "section_id": section.id,
@@ -40,7 +47,7 @@ def generate_timetable(db: Session):
 
     num_sessions = len(sessions_to_schedule)
     print(f"[scheduler] Starting generation: {len(sections)} sections, "
-          f"{num_sessions} sessions to schedule. This takes 4-7 minutes - "
+          f"{num_sessions} sessions to schedule. This takes several minutes - "
           f"please wait, this is not stuck.")
 
     def valid_room_indices(session):

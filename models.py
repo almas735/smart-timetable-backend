@@ -1,8 +1,5 @@
 """
 Database models for the Smart Timetable app.
-------------------------------------------------
-Subject.requires_lab and Section.strength are both required -
-used by the genetic algorithm for room-type and capacity matching.
 """
 
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey
@@ -10,11 +7,13 @@ from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 
 engine = create_engine("sqlite:///timetable.db", echo=True)
+
 Base = declarative_base()
 
 
 class Department(Base):
     __tablename__ = "departments"
+
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
 
@@ -25,6 +24,7 @@ class Department(Base):
 
 class Faculty(Base):
     __tablename__ = "faculty"
+
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     email = Column(String, unique=True, nullable=False)
@@ -36,6 +36,7 @@ class Faculty(Base):
 
 class Subject(Base):
     __tablename__ = "subjects"
+
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     sessions_per_week = Column(Integer, nullable=False)
@@ -50,6 +51,7 @@ class Subject(Base):
 
 class Room(Base):
     __tablename__ = "rooms"
+
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     capacity = Column(Integer, nullable=False)
@@ -58,6 +60,7 @@ class Room(Base):
 
 class Section(Base):
     __tablename__ = "sections"
+
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     semester = Column(Integer, nullable=False)
@@ -69,6 +72,7 @@ class Section(Base):
 
 class TimeSlot(Base):
     __tablename__ = "timeslots"
+
     id = Column(Integer, primary_key=True)
     day = Column(String, nullable=False)
     period_number = Column(Integer, nullable=False)
@@ -76,6 +80,7 @@ class TimeSlot(Base):
 
 class Timetable(Base):
     __tablename__ = "timetables"
+
     id = Column(Integer, primary_key=True)
     status = Column(String, default="draft")
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -85,6 +90,7 @@ class Timetable(Base):
 
 class TimetableEntry(Base):
     __tablename__ = "timetable_entries"
+
     id = Column(Integer, primary_key=True)
     timetable_id = Column(Integer, ForeignKey("timetables.id"))
     section_id = Column(Integer, ForeignKey("sections.id"))
@@ -96,17 +102,27 @@ class TimetableEntry(Base):
     timetable = relationship("Timetable", back_populates="entries")
 
 
+class SectionElective(Base):
+    __tablename__ = "section_electives"
+    id = Column(Integer, primary_key=True)
+    section_id = Column(Integer, ForeignKey("sections.id"))
+    subject_id = Column(Integer, ForeignKey("subjects.id"))
+
+
 class User(Base):
     __tablename__ = "users"
+
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     email = Column(String, unique=True, nullable=False)
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False)
+    fcm_token = Column(String, nullable=True)
+
     faculty_id = Column(Integer, ForeignKey("faculty.id"), nullable=True)
     section_id = Column(Integer, ForeignKey("sections.id"), nullable=True)
 
 
 if __name__ == "__main__":
     Base.metadata.create_all(engine)
-    print("\nDone - timetable.db created with all 9 tables.")
+    print("\nDone - timetable.db tables created/verified.")

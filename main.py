@@ -1,9 +1,8 @@
 """
 Smart Timetable App - Backend API (complete file)
 ------------------------------------------------------
-Full CRUD for Departments, Faculty, Subjects, Rooms, Sections,
-plus timetable generation, retrieval, login, manual override,
-and automatic rescheduling for faculty leave.
+Full CRUD, timetable generation, login, manual override,
+leave rescheduling, NEP 2020 electives, and push notifications.
 
 Run with: uvicorn main:app --reload
 Test at:  http://127.0.0.1:8000/docs
@@ -20,6 +19,17 @@ import bcrypt
 import models
 from database import get_db
 from scheduler import generate_timetable
+
+import firebase_admin
+from firebase_admin import credentials, messaging
+
+try:
+    cred = credentials.Certificate("firebase-admin-key.json")
+    firebase_admin.initialize_app(cred)
+    FIREBASE_READY = True
+except Exception as e:
+    print(f"[firebase] Could not initialize - notifications disabled: {e}")
+    FIREBASE_READY = False
 
 app = FastAPI(title="Smart Timetable API")
 
@@ -39,10 +49,6 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
-
-# ============================================================
-# AUTH
-# ============================================================
 
 class UserRegister(BaseModel):
     name: str
@@ -98,9 +104,39 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
     return user
 
 
-# ============================================================
-# DEPARTMENTS
-# ============================================================
+class TokenRegister(BaseModel):
+    user_id: int
+    fcm_token: str
+
+
+@app.post("/auth/register-token")
+def register_token(data: TokenRegister, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == data.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.fcm_token = data.fcm_token
+    db.commit()
+    return {"message": "Token registered"}
+
+
+def send_notification_to_all(db: Session, title: str, body: str):
+    if not FIREBASE_READY:
+        print("[notifications] Firebase not initialized - skipping.")
+        return
+    users = db.query(models.User).filter(models.User.fcm_token.isnot(None)).all()
+    sent = 0
+    for user in users:
+        try:
+            message = messaging.Message(
+                notification=messaging.Notification(title=title, body=body),
+                token=user.fcm_token,
+            )
+            messaging.send(message)
+            sent += 1
+        except Exception as e:
+            print(f"[notifications] Failed to send to user {user.id}: {e}")
+    print(f"[notifications] Sent to {sent}/{len(users)} registered device(s).")
+
 
 class DepartmentCreate(BaseModel):
     name: str
@@ -156,10 +192,6 @@ def delete_department(department_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": f"Department {department_id} deleted"}
 
-
-# ============================================================
-# FACULTY
-# ============================================================
 
 class FacultyCreate(BaseModel):
     name: str
@@ -229,10 +261,6 @@ def delete_faculty(faculty_id: int, db: Session = Depends(get_db)):
     return {"message": f"Faculty {faculty_id} deleted"}
 
 
-# ============================================================
-# SUBJECTS
-# ============================================================
-
 class SubjectCreate(BaseModel):
     name: str
     sessions_per_week: int
@@ -269,6 +297,21 @@ def list_subjects(db: Session = Depends(get_db)):
     return db.query(models.Subject).all()
 
 
+@app.get("/subjects/electives")
+def list_elective_subjects(db: Session = Depends(get_db)):
+    subjects = db.query(models.Subject).filter(models.Subject.is_elective == True).all()
+    result = []
+    for s in subjects:
+        dept = db.query(models.Department).filter(models.Department.id == s.department_id).first()
+        result.append({
+            "id": s.id,
+            "name": s.name,
+            "department": dept.name,
+            "sessions_per_week": s.sessions_per_week,
+        })
+    return result
+
+
 @app.get("/subjects/{subject_id}", response_model=SubjectOut)
 def get_subject(subject_id: int, db: Session = Depends(get_db)):
     subject = db.query(models.Subject).filter(models.Subject.id == subject_id).first()
@@ -298,10 +341,6 @@ def delete_subject(subject_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": f"Subject {subject_id} deleted"}
 
-
-# ============================================================
-# ROOMS
-# ============================================================
 
 class RoomCreate(BaseModel):
     name: str
@@ -362,10 +401,6 @@ def delete_room(room_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": f"Room {room_id} deleted"}
 
-
-# ============================================================
-# SECTIONS
-# ============================================================
 
 class SectionCreate(BaseModel):
     name: str
@@ -429,9 +464,64 @@ def delete_section(section_id: int, db: Session = Depends(get_db)):
     return {"message": f"Section {section_id} deleted"}
 
 
-# ============================================================
-# TIMETABLE GENERATION
-# ============================================================
+@app.get("/sections/{section_id}/electives")
+def get_section_electives(section_id: int, db: Session = Depends(get_db)):
+    links = db.query(models.SectionElective).filter(
+        models.SectionElective.section_id == section_id
+    ).all()
+    result = []
+    for link in links:
+        subject = db.query(models.Subject).filter(models.Subject.id == link.subject_id).first()
+        dept = db.query(models.Department).filter(models.Department.id == subject.department_id).first()
+        result.append({
+            "link_id": link.id,
+            "subject_id": subject.id,
+            "subject_name": subject.name,
+            "department": dept.name,
+        })
+    return result
+
+
+class ElectiveAssign(BaseModel):
+    subject_id: int
+
+
+@app.post("/sections/{section_id}/electives")
+def add_section_elective(section_id: int, assign: ElectiveAssign, db: Session = Depends(get_db)):
+    section = db.query(models.Section).filter(models.Section.id == section_id).first()
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    subject = db.query(models.Subject).filter(models.Subject.id == assign.subject_id).first()
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    if not subject.is_elective:
+        raise HTTPException(status_code=400, detail="This subject is not marked as an elective.")
+
+    existing = db.query(models.SectionElective).filter(
+        models.SectionElective.section_id == section_id,
+        models.SectionElective.subject_id == assign.subject_id,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="This elective is already assigned to this section.")
+
+    link = models.SectionElective(section_id=section_id, subject_id=assign.subject_id)
+    db.add(link)
+    db.commit()
+    return {"message": "Elective added"}
+
+
+@app.delete("/sections/{section_id}/electives/{link_id}")
+def remove_section_elective(section_id: int, link_id: int, db: Session = Depends(get_db)):
+    link = db.query(models.SectionElective).filter(
+        models.SectionElective.id == link_id,
+        models.SectionElective.section_id == section_id,
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Elective assignment not found")
+    db.delete(link)
+    db.commit()
+    return {"message": "Elective removed"}
+
 
 @app.post("/timetable/generate")
 def create_timetable(db: Session = Depends(get_db)):
@@ -470,6 +560,12 @@ def create_timetable(db: Session = Depends(get_db)):
             timeslot_id=timeslot_id,
         ))
     db.commit()
+
+    send_notification_to_all(
+        db,
+        "New Timetable Generated",
+        f"A new conflict-free timetable with {len(assignments)} classes is now available.",
+    )
 
     return {
         "timetable_id": new_timetable.id,
